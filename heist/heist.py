@@ -13,6 +13,7 @@ import discord
 from redbot.core import commands
 from redbot.core.data_manager import bundled_data_path
 from redbot.core.i18n import Translator, cog_i18n
+from redbot.core.utils.chat_formatting import escape
 from .thief import Thief, PluralDict
 
 from tabulate import tabulate
@@ -27,8 +28,8 @@ class Heist(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.thief = Thief()
-        self.version = "a0.0.1"
-        self.redver = "3.1.2"
+        self.version = "b0.3.1"
+        self.redver = "3.3.9"
         self.cycle_task = bot.loop.create_task(self.thief.vault_updater(bot))
 
     @commands.group(no_pm=True)
@@ -49,7 +50,7 @@ class Heist(commands.Cog):
         """Clears a member of jail and death statuses."""
         author = ctx.message.author
         await self.thief.member_clear(user)
-        await ctx.send("```{} administratively cleared {}```".format(author.name, user.name))
+        await ctx.send("```{} administratively cleared {}```".format(escape(author.display_name, formatting=True), escape(user.display_name, formatting=True)))
 
     @heist.command(name="version")
     @checks.admin_or_permissions(manage_guild=True)
@@ -95,7 +96,7 @@ class Heist(commands.Cog):
             player = user
 
         if await self.thief.get_member_status(player) != "Apprehended":
-            return await ctx.send("{} is not in jail.".format(player.display_name))
+            return await ctx.send("{} is not in jail.".format(escape(player.display_name, formatting=True)))
 
         cost = await self.thief.get_member_bailcost(player)
         if not await bank.get_balance(player) >= cost:
@@ -108,18 +109,18 @@ class Heist(commands.Cog):
                    "Do you still wish to pay the {0} amount?".format(t_bail, cost, t_sentence))
         else:
             msg = ("You are about pay a {2} amount for {0} and it will cost you {1} credits. "
-                   "Are you sure you wish to pay {1} for {0}?".format(player.name, cost, t_bail))
+                   "Are you sure you wish to pay {1} for {0}?".format(escape(player.display_name, formatting=True), cost, t_bail))
 
         await ctx.send(msg)
-        response = await self.bot.wait_for('MESSAGE', timeout=15, check=lambda x: x.author == author)
-
-        if response is None:
+        try:
+            response = await self.bot.wait_for("message", timeout=15, check=lambda x: x.author == author)
+        except asyncio.TimeoutError:
             await ctx.send("You took too long. canceling transaction.")
             return
 
         if "yes" in response.content.lower():
             msg = ("Congratulations {}, you are free! Enjoy your freedom while it "
-                   "lasts...".format(player.display_name))
+                   "lasts...".format(escape(player.display_name, formatting=True)))
             await bank.withdraw_credits(author, cost)
             await self.thief.set_member_free(author)
             await self.thief.set_member_oob(author, False)
@@ -144,9 +145,9 @@ class Heist(commands.Cog):
                  "name of this target?".format(ctx.prefix))
 
         await ctx.send(start)
-        name = await self.bot.wait_for('MESSAGE', timeout=35, check=lambda x: x.author == author)
-
-        if name is None:
+        try:
+            name = await self.bot.wait_for("message", timeout=35, check=lambda x: x.author == author)
+        except asyncio.TimeoutError:
             await ctx.send("You took too long. canceling target creation.")
             return
 
@@ -163,9 +164,9 @@ class Heist(commands.Cog):
         await ctx.send("What is the max crew size for this target? Cannot be the same as "
                            "other targets.\n*Crews over this size will go to the next "
                            "largest bank.*")
-        crew = await self.bot.wait_for('MESSAGE', timeout=35, check=check)
-
-        if crew is None:
+        try:
+            crew = await self.bot.wait_for("message", timeout=35, check=check)
+        except asyncio.TimeoutError:
             await ctx.send("You took too long. canceling target creation.")
             return
 
@@ -178,9 +179,9 @@ class Heist(commands.Cog):
             return
 
         await ctx.send("How many starting credits does this target have?")
-        vault = await self.bot.wait_for('MESSAGE', timeout=35, check=check)
-
-        if vault is None:
+        try:
+            vault = await self.bot.wait_for("message", timeout=35, check=check)
+        except asyncio.TimeoutError:
             await ctx.send("You took too long. canceling target creation.")
             return
 
@@ -189,21 +190,26 @@ class Heist(commands.Cog):
             return
 
         await ctx.send("What is the maximum number of credits this target can hold?")
-        vault_max = await self.bot.wait_for('MESSAGE', timeout=35, check=check)
-
-        if vault_max is None:
+        try:
+            vault_max = await self.bot.wait_for("message", timeout=35, check=check)
+        except asyncio.TimeoutError:
             await ctx.send("You took too long. canceling target creation.")
             return
-
+        
         if vault_max.content == cancel:
             await ctx.send("Target creation cancelled.")
             return
+        
+        if vault_max.content.isdigit() and int(vault_max.content) >= ((2**64)-1):
+            return await ctx.send("Number is too high, canceling target creation.")
 
         await ctx.send("What is the individual chance of success for this target? 1-100")
-        check = lambda m: m.content.isdigit() and 0 < int(m.content) <= 100 or m.content == cancel
-        success = await self.bot.wait_for('MESSAGE', timeout=35, check=check)
-
-        if success is None:
+        #check = lambda m: m.content.isdigit() and 0 < int(m.content) <= 100 or m.content == cancel # <--- missing author check here?
+        check = lambda m: m.author == author and (m.content.isdigit() and 0 < int(m.content) <= 100 or m.content == cancel)
+        
+        try:
+            success = await self.bot.wait_for("message", timeout=35, check=check)
+        except asyncio.TimeoutError:
             await ctx.send("You took too long. canceling target creation.")
             return
 
@@ -240,11 +246,12 @@ class Heist(commands.Cog):
 
         await ctx.send("Which property of {} would you like to edit?\n"
                            "{}".format(target, ", ".join(keys)))
-
-        response = await self.bot.wait_for('MESSAGE', timeout=15, check=check)
-
-        if response is None:
-            return await ctx.send("Canceling removal. You took too long.")
+        
+        try:
+            response = await self.bot.wait_for("message", timeout=15, check=check)
+        except asyncio.TimeoutError:
+            await ctx.send("Canceling removal. You took too long.")
+            return
 
         if response.content.title() == "Name":
             await ctx.send("What would you like to rename the target to?\n*Cannot be a name "
@@ -266,11 +273,12 @@ class Heist(commands.Cog):
                                "players for that target.")
             crew_sizes = [subdict["Crew"] for subdict in targets.values()]
             check2 = lambda m: m.content.isdigit() and int(m.content) not in crew_sizes and m.author == author
-
-        choice = await self.bot.wait_for('MESSAGE', timeout=15, check=check2)
-
-        if choice is None:
-            return await ctx.send("Canceling removal. You took too long.")
+            
+        try:
+            choice = await self.bot.wait_for("message", timeout=15, check=check2)
+        except asyncio.TimeoutError:
+            await ctx.send("Canceling removal. You took too long.")
+            return
 
         if response.content.title() == "Name":
             new_name = string.capwords(choice.content)
@@ -294,10 +302,12 @@ class Heist(commands.Cog):
         if string.capwords(target) in targets:
             await ctx.send("Are you sure you want to remove {} from the list of "
                                "targets?".format(string.capwords(target)))
-            response = await self.bot.wait_for('MESSAGE', timeout=15, check=lambda x: x.author == author)
-            if response is None:
-                msg = "Canceling removal. You took too long."
-            elif response.content.title() == "Yes":
+            try:
+                response = await self.bot.wait_for("message", timeout=15, check=lambda x: x.author == author)
+            except asyncio.TimeoutError:
+                await ctx.send("Canceling removal. You took too long.")
+                return
+            if response.content.title() == "Yes":
                 targets.pop(string.capwords(target))
                 await self.thief.save_targets(guild, targets)
                 msg = "{} was removed from the list of targets.".format(string.capwords(target))
@@ -478,7 +488,7 @@ class Heist(commands.Cog):
             crew = await self.thief.add_crew_member(author)
             await ctx.send("A {4} is being planned by {0}\nThe {4} "
                                "will begin in {1} seconds. Type {2}heist play to join their "
-                               "{3}.".format(author.name, wait_time, ctx.prefix, t_crew, t_heist))
+                               "{3}.".format(escape(author.display_name, formatting=True), wait_time, ctx.prefix, t_crew, t_heist))
             await asyncio.sleep(wait_time)
             
             crew = await self.thief.config.guild(guild).Crew()
@@ -495,7 +505,7 @@ class Heist(commands.Cog):
             crew = await self.thief.add_crew_member(author)
             crew_size = len(crew)
             await ctx.send("{0} has joined the {2}.\nThe {2} now has {1} "
-                               "members.".format(author.display_name, crew_size, t_crew))
+                               "members.".format(escape(author.display_name, formatting=True), crew_size, t_crew))
 
     async def heist_game(self, ctx, guild, t_heist, t_crew, t_vault):
         config = await self.thief.get_guild_settings(guild)

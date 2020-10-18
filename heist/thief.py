@@ -1,5 +1,6 @@
 from redbot.core import Config, bank
 from redbot.core.data_manager import bundled_data_path
+from redbot.core.utils.chat_formatting import escape
 import time
 import bisect
 import random
@@ -312,18 +313,18 @@ class Thief:
             if chance <= success_rate:
                 good_thing = random.choice(good_out)
                 good_out.remove(good_thing)
-                crew[player.id] = {"Name": player.display_name, "Bonus": good_thing[1]}
+                crew[player.id] = {"Name": escape(player.display_name, formatting=True), "Bonus": good_thing[1]}
                 await self.config.guild(guild).Crew.set(crew)
                 await self.add_member_spree(player)
-                results.append(good_thing[0].format(player.name))
+                results.append(good_thing[0].format(escape(player.display_name, formatting=True)))
             else:
                 bad_thing = random.choice(bad_out)
-                dropout_msg = bad_thing[0] + "```\n{0} dropped out of the game.```"
+                dropout_msg = (bad_thing[0] + "```\n{0} dropped out of the game.```").format(escape(player.display_name, formatting=True))
                 await self.failure_handler(player, bad_thing[1])
                 del crew[str(player.id)]
                 await self.config.guild(guild).Crew.set(crew)
                 bad_out.remove(bad_thing)
-                results.append(dropout_msg.format(player.name))
+                results.append(dropout_msg)
         return results
 
     def get_theme(self, config):
@@ -395,10 +396,10 @@ class Thief:
         config = await self.get_guild_settings(guild)
         message_type = config["Crew"]
         if message_type == "Short":
-            name_list = '\n'.join(player.display_name for player in players[:5])
+            name_list = '\n'.join(escape(player.display_name, formatting=True) for player in players[:5])
             message = "{} crew members, including:```\n{}```".format(crew, name_list)
         elif message_type == "Long":
-            name_list = '\n'.join(player.display_name for player in players)
+            name_list = '\n'.join(escape(player.display_name, formatting=True) for player in players)
             message = "{} crew members, including:```\n{}```".format(crew, name_list)
         else:
             message = "{} crew members".format(crew)
@@ -417,7 +418,7 @@ class Thief:
         crew = await self.config.guild(guild).Crew()
         targets = await self.get_guild_targets(guild)
 
-        names = [player.name for player in players]
+        names = [escape(player.display_name, formatting=True) for player in players]
         bonuses = [subdict["Bonus"] for subdict in crew.values()]
         vault = targets[target]["Vault"]
         credits_stolen = int(int(vault) * 0.75 / len(crew))
@@ -474,14 +475,15 @@ class Thief:
             while True:
                 servers = [x for x in bot.guilds if (await self.config.guild(x).Config())["Registered"]]
                 for server in servers:
-                    for target in await self.config.guild(server).Targets():
-                        vault = target["Vault"]
-                        vault_max = target["Vault Max"]
+                    targets = await self.config.guild(server).Targets()
+                    for target, settings in targets.items():
+                        vault = settings["Vault"]
+                        vault_max = settings["Vault Max"]
                         if vault < vault_max:
-                            increment = min(vault + int(vault_max * 0.04), vault_max)
-                            target["Vault"] = increment
-                        else:
-                            pass
+                            increment = int(vault_max * 0.04)
+                            new_vault = min(vault + increment, vault_max)
+                            targets[target]["Vault"] = new_vault
+                    await self.config.guild(server).Targets.set_raw(value=targets)                        
                 await asyncio.sleep(120)  # task runs every 120 seconds
         except asyncio.CancelledError:
             pass
